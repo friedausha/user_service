@@ -17,10 +17,10 @@ services:
       db:
         condition: service_healthy
   db:
-#    image: mysql:5.7.34
-#    container_name: mysql-db
-#    platform: linux/amd64
-    image: mysql:8.0
+    image: mysql/mysql-server:5.7
+    container_name: mysql-db
+    platform: linux/amd64
+#    image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
       MYSQL_DATABASE: ${DB_NAME}
@@ -31,12 +31,11 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost --silent -p${DB_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    command: --innodb-force-recovery=1
 
   migrate:
     image: migrate/migrate

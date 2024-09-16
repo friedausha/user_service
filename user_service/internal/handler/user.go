@@ -1,88 +1,87 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	_ "errors"
+	"fmt"
 	"git.garena.com/frieda.hasanah/user_service/internal/dto"
 	"git.garena.com/frieda.hasanah/user_service/internal/model"
-	"github.com/labstack/echo/v4"
-	"io/ioutil"
-	"net/http"
 	"strings"
 )
 
-type handler struct {
+type Handler struct {
 	authService model.IAuthService
 	userService model.IUserService
 }
 
-// Init will initialize the REST handler for user service
-func Init(e *echo.Group, authService model.IAuthService, userService model.IUserService) {
-	h := handler{
+// NewHandler returns a new handler instance
+func NewHandler(authService model.IAuthService, userService model.IUserService) *Handler {
+	return &Handler{
 		authService: authService,
 		userService: userService,
 	}
-
-	e.POST("/api/register", h.Register)
-	e.POST("/api/token", h.Login)
-	e.POST("/api/token/verify", h.VerifyToken)
 }
 
-func (h *handler) sendError(c echo.Context, code int, message string) error {
-	return c.JSON(code, map[string]string{"error": message})
-}
-
-func (h handler) Register(c echo.Context) error {
-	b, err := ioutil.ReadAll(c.Request().Body)
-	if err != nil {
-		return err
+// HandleRequest handles the raw TCP requests
+func (h *Handler) HandleRequest(request string) string {
+	requestParts := strings.SplitN(request, " ", 2)
+	if len(requestParts) < 2 {
+		return h.sendError("Invalid request format")
 	}
 
+	switch requestParts[0] {
+	case "REGISTER":
+		return h.Register(requestParts[1])
+	case "LOGIN":
+		return h.Login(requestParts[1])
+	case "VERIFY_TOKEN":
+		return h.VerifyToken(requestParts[1])
+	default:
+		return h.sendError("Unknown command")
+	}
+}
+
+func (h *Handler) sendError(message string) string {
+	return fmt.Sprintf(`{"error": "%s"}`, message)
+}
+
+func (h *Handler) Register(payload string) string {
 	var u model.User
-	if err = json.Unmarshal(b, &u); err != nil {
-		return h.sendError(c, http.StatusBadRequest, "Invalid request payload")
+	if err := json.Unmarshal([]byte(payload), &u); err != nil {
+		return h.sendError("Invalid request payload")
 	}
 
-	if u, err = h.userService.Register(c.Request().Context(), u); err != nil {
-		return h.sendError(c, http.StatusInternalServerError, err.Error())
-	}
-
-	return c.JSON(http.StatusCreated, dto.TransformRegisterResponse(u))
-}
-
-func (h handler) Login(c echo.Context) error {
-	b, err := ioutil.ReadAll(c.Request().Body)
+	u, err := h.userService.Register(context.Background(), u)
 	if err != nil {
-		return h.sendError(c, http.StatusBadRequest, " Failed to read request body")
+		return h.sendError(err.Error())
 	}
 
-	var u model.User
-	if err = json.Unmarshal(b, &u); err != nil {
-		return h.sendError(c, http.StatusBadRequest, "Invalid request payload")
-	}
-
-	var expIn int64
-	if u, expIn, err = h.authService.Login(c.Request().Context(), u.Username, u.Password); err != nil {
-		return h.sendError(c, http.StatusUnauthorized, err.Error())
-	}
-
-	response := dto.TransformLoginResponse(u, expIn)
-	return c.JSON(http.StatusOK, response)
+	response, _ := json.Marshal(dto.TransformRegisterResponse(u))
+	return string(response)
 }
 
-func (h handler) VerifyToken(c echo.Context) error {
-	authHeader := c.Request().Header.Get("Authorization")
-	if authHeader == "" {
-		return h.sendError(c, http.StatusUnauthorized, "Missing Authorization header")
+func (h *Handler) Login(payload string) string {
+	var u model.User
+	if err := json.Unmarshal([]byte(payload), &u); err != nil {
+		return h.sendError("Invalid request payload")
 	}
 
-	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	if tokenStr == authHeader {
-		return h.sendError(c, http.StatusUnauthorized, "Invalid token format")
+	u, expIn, err := h.authService.Login(context.Background(), u.Username, u.Password)
+	if err != nil {
+		return h.sendError(err.Error())
 	}
 
-	if _, err := h.authService.VerifyToken(tokenStr); err != nil {
-		return h.sendError(c, http.StatusUnauthorized, err.Error())
+	response, _ := json.Marshal(dto.TransformLoginResponse(u, expIn))
+	return string(response)
+}
+
+func (h *Handler) VerifyToken(token string) string {
+	token = strings.TrimPrefix(token, "Bearer ")
+	if _, err := h.authService.VerifyToken(token); err != nil {
+		return h.sendError(err.Error())
 	}
 
-	return c.JSON(http.StatusOK, dto.TransformVerifyResponse())
+	response, _ := json.Marshal(dto.TransformVerifyResponse())
+	return string(response)
 }
